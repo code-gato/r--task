@@ -1,0 +1,62 @@
+﻿@inherits LayoutComponentBase
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@inject Services.FirebaseAuthService AuthService
+@inject Services.FirebaseAuthStateProvider AuthStateProvider
+@inject NavigationManager Navigation
+@inject Blazored.LocalStorage.ILocalStorageService LocalStorage
+@inject Services.FirebaseRealtimeDatabaseService DatabaseService
+
+@attribute [Authorize]
+
+<div id="wrapper">
+
+    <header class="prev-sel">
+
+        <a href="/" class="r--task">r--task</a>
+
+        <AuthorizeView>
+            <Authorized>
+                <div class="user">
+                    <img src="img/user.png" alt="User" class="@(displayUserControls ? "menu-open" : "")"
+                    @onclick="@(() => { displayUserControls = !displayUserControls; })">
+
+                    @if (displayUserControls)
+                    {
+                        <div class="user-controls">
+                            <span>@(username)</span>
+                            <button class="red" @onclick="SignOut">Sign Out</button>
+                        </div>
+                    }
+
+                </div>
+            </Authorized>
+            <NotAuthorized>
+                <a href="/login"> <button>Log In</button> </a>
+            </NotAuthorized>
+        </AuthorizeView>
+    </header>
+
+    <main>
+        @Body
+    </main>
+
+</div>
+
+@code {
+    private bool displayUserControls = false;
+    private string username = "";
+
+    protected override async Task OnInitializedAsync ()
+    {
+        this.username = await LocalStorage.GetItemAsync<string>("username") ?? "";
+        StateHasChanged();
+    }
+
+    private async Task SignOut ()
+    {
+        await AuthService.SignOut();
+        Navigation.NavigateTo("/", true);
+    }
+
+}

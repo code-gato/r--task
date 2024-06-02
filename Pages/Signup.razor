@@ -1,0 +1,181 @@
+@page "/signup"
+@layout NoLayout
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using System.Text.RegularExpressions
+@inject Services.FirebaseAuthService FirebaseAuthService
+@inject NavigationManager Navigation
+
+<div id="login-flex" class="prev-sel">
+    <span id="login-title">r--task</span>
+    
+    <p class="error-message">@(errorMessage)</p>
+
+    <div id="login" class="@(status)">
+
+        <AuthorizeView>
+            <Authorized>
+                <span style="font-size: 1.15em; align-self: center;">You are already logged in!</span>
+                <button @onclick="@(() => { Navigation.NavigateTo("/", true); })">Home</button>
+                <button class="red" @onclick="FirebaseAuthService.SignOut">Sign out</button>
+            </Authorized>
+            <NotAuthorized>
+
+                <input type="text" id="user" placeholder="@userph" tabindex="0"
+                    class="@(usernameError ? "error" : "")"
+                    @bind-value="username" @bind-value:event="oninput"  
+                    @onfocus="@(() => { userph = ""; })"
+                    @onblur="@(() => { userph = "username"; })">
+                
+                <input type="text" id="email" placeholder="@emailph"
+                    class="@(emailError ? "error" : "")"
+                    @bind-value="email" @bind-value:event="oninput"  
+                    @onfocus="@(() => { emailph = ""; })"
+                    @onblur="@(() => { emailph = "email"; })">
+                
+                <input type="password" id="pass" placeholder="@passph"
+                    class="@(passwordError ? "error" : "")"
+                    @bind-value="password" @bind-value:event="oninput"  
+                    @onfocus="@(() => { passph = ""; })"
+                    @onblur="@(() => { passph = "password"; })">
+                
+                <input type="password" id="confirmpass" placeholder="@confpassph"
+                    class="@(passwordError ? "error" : "")"
+                    @bind-value="confPassword" @bind-value:event="oninput"  
+                    @onfocus="@(() => { confpassph = ""; })"
+                    @onblur="@(() => { confpassph = "confirm password"; })">
+
+                @if (!loading) { <button @onclick="Register">Sign up</button> }
+                else { <button @onclick="Register" disabled>Sign up</button> }
+
+                <span class="authinfo">Already have an account? <a href="/login">Log in</a></span>
+
+            </NotAuthorized>
+        </AuthorizeView>
+
+    </div>
+</div>
+
+@code {
+    // placeholders
+    private string userph = "username";
+    private string emailph = "email";
+    private string passph = "password";
+    private string confpassph = "confirm password";
+    // valores
+    private string username = "";
+    private string email = "";
+    private string password = "";
+    private string confPassword = "";
+    // control de errores
+    private bool loading = false;
+    private string status = "idle";
+    private string errorMessage = "";
+    private bool usernameError = false;
+    private bool emailError = false;
+    private bool passwordError = false;
+
+    private async Task Register()
+    {
+        usernameError = false;
+        emailError = false;
+        passwordError = false;
+
+        // Regular expression pattern for username validation
+        var usernamePattern = @"^[a-zA-Z0-9_-]{3,}$";
+
+        if (
+            !string.IsNullOrEmpty(username) &&
+            !string.IsNullOrEmpty(email) &&
+            !string.IsNullOrEmpty(password) &&
+            !string.IsNullOrEmpty(confPassword) &&
+            Regex.IsMatch(username, usernamePattern) &&
+            username.Length >= 3 && username.Any(char.IsLetter) &&
+            password.Length >= 8 &&
+            password == confPassword &&
+            password.Any(char.IsDigit) && password.Any(char.IsLetter) &&
+            !username.Contains(" ")
+        ) {
+            try {
+                loading = true;
+                status = "loading-login";
+                StateHasChanged();
+
+                await FirebaseAuthService.RegisterWithEmail(username, email, password);
+                Navigation.NavigateTo("/", true);
+
+            } catch (Exception e) {
+                if (e.Message == "email_in_use") {
+                    await ShowError("That email address is already in use!", "email");
+                } else if (e.Message == "username_taken") {
+                    await ShowError("That username is taken!", "username");
+                } else {
+                    Console.Error.WriteLine($"{e.Message}");
+                    await ShowError("Authentication error. Please try again later.");
+                }
+            }
+        } else {
+            if (string.IsNullOrEmpty(username) ||
+                string.IsNullOrEmpty(email) ||
+                string.IsNullOrEmpty(password) ||
+                string.IsNullOrEmpty(confPassword)) {
+                await ShowError("Please complete all fields");            
+            } else if (!Regex.IsMatch(username, usernamePattern)) {
+                await ShowError("Your username must be at least 3 characters long and contain only letters, digits, '-', or '_'.", "username");
+            } else if (username.Length < 3 || !username.Any(char.IsLetter)) {
+                await ShowError("Your username must be longer than 2 characters and include at least one letter.", "username");
+            } else if (password.Length < 8) {
+                await ShowError("Your password must be longer than 8 characters.", "password");
+            } else if (password != confPassword) {
+                await ShowError("Passwords do not match.", "password");
+            } else if (!password.Any(char.IsDigit) || !password.Any(char.IsLetter)) {
+                await ShowError("Your password must have at least 1 number and 1 letter.", "password");
+            } else if (username.Contains(" ")) {
+                await ShowError("Your username cannot contain spaces.", "username");
+            }
+        }
+    }
+
+    private async Task ShowError(string message, string field = "")
+    {
+        loading = false;
+
+        switch (field){
+            case "username":
+                usernameError = true;
+                break;
+            case "email":
+                emailError = true;
+                break;
+            case "password":
+                passwordError = true;
+                break;
+        }
+
+        status = "failed-login";
+        errorMessage = $"{message}";
+        StateHasChanged();
+
+        await Task.Delay(5000);
+
+        status = "idle";
+        errorMessage = "";
+        StateHasChanged();
+
+        await Task.Delay(3000);
+        
+        switch (field){
+            case "username":
+                usernameError = false;
+                break;
+            case "email":
+                emailError = false;
+                break;
+            case "password":
+                passwordError = false;
+                break;
+        }
+        StateHasChanged();
+    }
+
+}

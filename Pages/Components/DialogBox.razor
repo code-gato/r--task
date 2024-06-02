@@ -1,0 +1,233 @@
+@inherits LayoutComponentBase
+
+@if (display)
+{
+    <div id="dialog-box" class="prev-sel">
+        @if (mode == "info")
+        {
+            <div class="info-dialog">
+                <span>@(message)</span>
+            </div>
+
+            @* Define una animación para que el cuadro se desvanezca progresivamente *@
+            <style>
+                #dialog-box {     
+                    opacity: 0;
+                    animation-name: dialogBoxFadeOut;
+                    animation-duration: 4s;
+                    animation-iteration-count: 1;
+                }
+            </style>
+        }
+        else if (mode == "bool")
+        {
+            <div class="dialog">
+                <span> @(message)</span>
+                <div class="controls prev-sel">
+                    <span @onclick="() => ReturnBoolValue(true)">
+                        Yes
+                    </span>
+                    <span @onclick="() => ReturnBoolValue(false)">
+                        No
+                    </span>
+                </div>
+            </div>
+        }
+        else if (mode == "string")
+        {
+            <div class="dialog">
+                <span>@(message)</span>
+
+                <input type="text"
+                    @bind="stringValue" @bind:event="oninput"
+                    @onkeydown="@((e) => {
+                        if (e.Key == "Escape") ReturnStringValue("");
+                        if (e.Key == "Enter") ReturnStringValue(stringValue);
+                    })"
+                >
+                <div class="controls prev-sel">
+                    <span @onclick="() => ReturnStringValue(stringValue)">
+                        Confirm
+                    </span>
+                    <span @onclick='() => ReturnStringValue(null)'>
+                        Cancel
+                    </span>
+                </div>
+            </div>
+        }
+        else if (mode == "dictionary")
+        {
+            // flag de control
+            bool valid = listStringValue
+                .GroupBy(x => x)
+                .All(g => !string.IsNullOrEmpty(g.Key) && g.Count() == 1 && g.Key.Any(char.IsLetter));
+            // controla el índice del valor introducido en la lista
+            int index = 0;
+            // inicializo una lista de valores con un primer valor vacío para mostrar 1 campo
+            <div class="dialog">
+                <span> @(message)</span>
+                <div class="dictionary-value-wrapper">
+                    @foreach (var value in listStringValue)
+                    {
+                        var currentIndex = index;
+                        index++;
+                        <div class="dictionary-value">
+                            @if (listStringValue.Count() > 1) { <span class="dictionary-remove-value" @onclick="@(() => { listStringValue.Remove(value); StateHasChanged(); })"> × </span> }
+
+                            <input type="text"
+                            @bind="listStringValue[currentIndex]" @bind:event="oninput"
+                            @onkeydown="@((e) => {
+                                if (e.Key == "Escape") ReturnDictionaryValue(null);
+                                if (e.Key == "Enter") {
+                                    listStringValue.Add("");
+                                    StateHasChanged();
+                                }
+                                })">
+                        </div>
+                    }
+                </div>
+                <span class="dictionary-add-value prev-sel" @onclick="@(() => { listStringValue.Add(""); StateHasChanged(); })">+</span>
+                <div class="controls prev-sel">
+                    @if (listStringValue.Count() > 1 && valid)
+                    {
+                        <span @onclick="(() => { 
+                            ReturnDictionaryValue(listStringValue.ToDictionary(value => value, value => false)); 
+                        })">
+                            Confirm
+                        </span>
+                    }
+                    else
+                    {
+                        <span style="filter: brightness(0.6); cursor: default;">
+                            Confirm
+                        </span>
+                    }
+                    <span @onclick='(() => { ReturnDictionaryValue(null); })'>
+                        Cancel
+                    </span>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    // fuente de retorno de la tarea asíncrona (bool)
+    private TaskCompletionSource<bool> _confirmationSource = null!;
+    // fuente de retorno de la tarea asíncrona (string)
+    private TaskCompletionSource<string?> _stringSource = null!;
+    // fuente de retorno de la tarea asíncrona (Dictionary<string, bool>)
+    private TaskCompletionSource<Dictionary<string, bool>?> _dictionarySource = null!;
+    // valores string para crear un diccionario <string, bool>
+    private List<string> listStringValue = [ "" ];
+    // valores string para guardar contenidos
+    private string? stringValue;
+    // controla cuándo se muestra el cuadro de diálogo
+    private bool display = false;
+    // controla el modo (info / confirmación / string)
+    private string mode = "";
+    // controla el mensaje a mostrar en el cuadro de diálogo
+    public string message { get; private set; } = "";
+    // controla la cancelación de delay en InfoAsync
+    private CancellationTokenSource? cancellationTokenSource;
+
+    // muestra el componente en modo "info"
+    public async Task InfoAsync (string _message)
+    {
+        mode = "info";
+        message = _message;
+        display = true;
+        StateHasChanged();
+        
+        // Cancela cualquier delay anterior
+        cancellationTokenSource?.Cancel();
+        cancellationTokenSource = new CancellationTokenSource();
+        try
+        {
+            // tras 4 segundos, deja de mostrarse
+            await Task.Delay(4000, cancellationTokenSource.Token);
+            display = false;
+            StateHasChanged();
+        }
+        catch (TaskCanceledException)
+        {
+            // Ignored as we expect this to happen
+        }
+    }
+
+    // muestra el componente en modo "bool" (confirmación)
+    public Task<bool> BoolAsync (string _message)
+    {
+        mode = "bool";
+        message = _message;
+        display = true;
+        // Cancela cualquier delay anterior
+        cancellationTokenSource?.Cancel();
+        // crea una nueva respuesta para la tarea
+        _confirmationSource = new TaskCompletionSource<bool>();
+        StateHasChanged();
+        // la devuelve una vez recibe un resultado
+        return _confirmationSource.Task;
+    }
+
+    // muestra el componente en modo "string"
+    public Task<string?> StringAsync (string _message)
+    {
+        mode = "string";
+        stringValue = "";
+        message = _message;
+        display = true;
+        // Cancela cualquier delay anterior
+        cancellationTokenSource?.Cancel();
+        // crea una nueva respuesta para la tarea
+        _stringSource = new TaskCompletionSource<string?>();
+        StateHasChanged();
+        // la devuelve una vez recibe un resultado
+        return _stringSource.Task;
+    }
+
+    // muestra el componente en modo "dictionary"
+    public Task<Dictionary<string, bool>?> DictionaryAsync (string _message)
+    {
+        mode = "dictionary";
+        listStringValue = [""];
+        message = _message;
+        display = true;
+        // Cancela cualquier delay anterior
+        cancellationTokenSource?.Cancel();
+        // crea una nueva respuesta para la tarea
+        _dictionarySource = new TaskCompletionSource<Dictionary<string, bool>?>();
+        StateHasChanged();
+        // la devuelve una vez recibe un resultado
+        return _dictionarySource.Task;
+    }
+
+    // deja de mostrar el cuadro de diálogo y
+    // define el resultado para el modo "bool" (true/false)
+    private void ReturnBoolValue (bool value)
+    {
+        display = false;
+        _confirmationSource.SetResult(value);
+        StateHasChanged();
+    }
+
+    // deja de mostrar el cuadro de diálogo y
+    // define el resultado para el modo "string"
+    private void ReturnStringValue (string? value)
+    {
+        display = false;
+        _stringSource.SetResult(value);
+        StateHasChanged();
+    }
+
+    // deja de mostrar el cuadro de diálogo y
+    // define el resultado para el modo "dictionary"
+    private void ReturnDictionaryValue (Dictionary<string, bool>? value)
+    {
+        display = false;
+        if (value != null) _dictionarySource.SetResult(value);
+        else _dictionarySource.SetResult(null);
+        StateHasChanged();
+    }
+
+}

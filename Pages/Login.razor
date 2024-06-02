@@ -1,0 +1,104 @@
+@page "/login"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@layout NoLayout
+@inject Services.FirebaseAuthService FirebaseAuthService
+@inject NavigationManager Navigation
+
+@attribute [Authorize]
+
+<style>
+    img {
+        height: 75%;
+        width: auto;
+        vertical-align: middle;
+        text-align: center;
+    }
+</style>
+
+<div id="login-flex" class="prev-sel">
+
+    <span id="login-title">r--task</span>
+
+    <p class="error-message">@(errorMessage)</p>
+
+    <div id="login" class="@(loginStatus)">
+        
+        <AuthorizeView>
+            <Authorized>
+                <span style="font-size: 1.15em; align-self: center;">You are already logged in!</span>
+                <button @onclick="@(() => { Navigation.NavigateTo("/", true); })">Home</button>
+                <button class="red" @onclick="FirebaseAuthService.SignOut">Sign out</button>
+            </Authorized>
+            <NotAuthorized>
+                <input type="text" id="user" placeholder = "@userph" tabindex="0"
+                    @bind-value="username" @bind-value:event="oninput" 
+                    @onfocus="@(() => { userph = ""; })"
+                    @onblur="@(() => { userph = "username"; })"
+                    @onkeydown="@(async (e) => { if (e.Key == "Enter") await UserLogin(); })">
+
+                <input type="password" id="pass"placeholder = "@passph"
+                    @bind-value="password" @bind-value:event="oninput"
+                    @onfocus="@(() => { passph = ""; })"
+                    @onblur="@(() => { passph = "password"; })"
+                    @onkeydown="@(async (e) => { if (e.Key == "Enter") await UserLogin(); })">
+
+                @if (!loading) { <button @onclick="UserLogin">Log in</button> }
+                else { <button disabled>Log in</button> }
+
+                <span class="authinfo prev-sel">New here? <a href="/signup">Sign up</a></span>
+            </NotAuthorized>
+        </AuthorizeView>
+
+    </div>
+
+</div>
+
+@code {
+    private string userph = "username";
+    private string username = "";
+    private string passph = "password";
+    private string password = "";
+    private bool loading = false;
+    private string loginStatus = "idle";
+    private string errorMessage = "";
+
+    private async Task UserLogin()
+    {
+        if (username == "" || password == "") {
+            await ShowError("Please provide a username/email and password.");
+        }
+        else  {
+            try {
+                loading = true;
+                loginStatus = "loading-login";
+                StateHasChanged();
+                
+                // intento de inicio de sesión
+                await FirebaseAuthService.LogInWithEmail(username, password);
+
+                // redirección a la página principal
+                Navigation.NavigateTo("", true);
+            }
+            catch (Exception) {
+                await ShowError("Invalid credentials. Please try again.");
+            }
+        }
+    }
+
+    private async Task ShowError (string message)
+    {
+        /* en caso de error, añado la clase "failed-login" para
+        mostrar un borde rojo que indique al usuario el error */
+        loading = false;
+        loginStatus = "failed-login";
+        errorMessage = message;
+        StateHasChanged();
+
+        await Task.Delay(5000);
+
+        loginStatus = "idle";
+        errorMessage = "";
+        StateHasChanged();
+    }
+}

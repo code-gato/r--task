@@ -1,0 +1,327 @@
+@page "/tasks"
+@page "/tasks/{teamId}/{taskListId}"
+@using rtask.Pages.Components
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@inject Services.FirebaseRealtimeDatabaseService DatabaseService
+@inject Blazored.LocalStorage.ILocalStorageService LocalStorage
+@inject NavigationManager Navigation
+
+@attribute [Authorize]
+
+<AuthorizeView>
+
+    <Authorized>
+
+        <DialogBox @ref="dialogBox" />
+        
+        @if (selectedTaskList == null)
+        {
+            @if (!isTeamList)
+            {
+                <h1 class="prev-sel">@(username)'s task lists</h1>
+
+                <div id="tasks">
+
+                    <div class="create prev-sel" @onclick="CreateNewTaskList">
+                        +
+                    </div>
+
+                    @foreach (var taskList in taskLists)
+                    {
+                        bool completed = (taskList != null && !taskList.Tasks.Any(t => t.Value == false));
+
+                        <div class="task-list prev-sel @(completed ? "completed" : "")"
+                        @onclick="@(() => { selectedTaskList = taskList; })">
+
+                            <span class="title">
+
+                                @(taskList?.Title)
+
+                                @if (completed)
+                                {
+                                    <span>(Completed!)</span>
+                                }
+
+                            </span>
+
+                            <span class="description">"@(taskList?.Description)"</span>
+                        
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                <span style="padding: 1em;">
+                    @if (loading)
+                    {
+                        <img style="max-height: 100px; width: 100px; margin-left: calc(50vw - 75px);" src="img/status/loading.gif" alt="Loading" />
+                    }
+                    else
+                    {
+                        <span class="forbidden">
+                            You do not have access to this task list, or it does not exist :(
+                            <br /><br />
+                            <a href="/tasks">View your personal task lists</a>
+                        </span>
+                    }
+                </span>
+            }
+        }
+        else
+        {
+            <div class="detailed-task-list prev-sel">
+
+                <div class="detailed-task-list-title">
+                    
+                    @if (!isTeamList)
+                    {
+                        <button @onclick="@(() => { this.selectedTaskList = null;})">
+                            @("<")
+                        </button>
+                    }
+                    else
+                    {
+                        <button @onclick='@(() => { Navigation.NavigateTo("/teams"); } )'>
+                            @("<")
+                        </button>
+                    }
+
+                    <h1>@(selectedTaskList.Title)</h1>
+
+                    @if (!isTeamList)
+                    {
+                        <button class="red"
+                        @onclick="@(async () => { await RemoveTaskList(selectedTaskList.Id!, selectedTaskList.Title); })">
+                            
+                        </button>
+                    }
+                    else if (isTeamList && isAdmin)
+                    {
+                        <button class="red"
+                        @onclick="@(async () => { await RemoveTaskList(TaskListId!, selectedTaskList.Title); })">
+                            
+                        </button>
+                    }
+
+                </div>
+
+                <span class="description">@(selectedTaskList.Description)</span>
+
+                <div class="detailed-task-list-tasks">
+                    @foreach (var task in selectedTaskList.Tasks)
+                    {
+                        @if (task.Value)
+                        {
+                            <div class="detailed-task">
+
+                                · <span class="completed">@(task.Key)</span>
+
+                                @if (!isTeamList)
+                                {
+                                    <button class="red" @onclick="@(async () => { await ToggleTaskCompleted(selectedTaskList.Id!, task.Key, task.Value); })">
+                                        ✖
+                                    </button>
+                                }
+                                else
+                                {
+                                    <button class="red" @onclick="@(async () => { await ToggleTaskCompleted(TaskListId!, task.Key, task.Value); })">
+                                        ✖
+                                    </button>
+                                }
+
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="detailed-task">
+
+                                · <span class="ongoing">@(task.Key)</span>
+
+                                @if (!isTeamList)
+                                {
+                                    <button @onclick="@(async () => { await ToggleTaskCompleted(selectedTaskList.Id!, task.Key, task.Value); })">
+                                        ✓
+                                    </button>
+                                }
+                                else
+                                {
+                                    <button @onclick="@(async () => { await ToggleTaskCompleted(TaskListId!, task.Key, task.Value); })">
+                                        ✓
+                                    </button>
+                                }
+
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        }
+
+    </Authorized>
+
+    <NotAuthorized>
+        <NavigateToLogin />
+    </NotAuthorized>
+
+</AuthorizeView>
+
+@code {
+    // parámetros de referencia en caso de que se esté mostrando una lista de tareas de equipo
+    [Parameter]
+    public string? TeamId { get; set; } = null;
+    [Parameter]
+    public string? TaskListId { get; set; } = null;
+    
+    // nombre del equipo al que pertenece la lista de tareas (si es de equipo)
+    private string? TeamName = null;
+
+    // flag de control para comprobar si el usuario es el administrador de la lista de tareas (en caso de que sea una lista de tareas de equipo)
+    private bool isAdmin = false;
+    
+    // flag de control para mostrar el modo lista de tareas de usuario/equipo
+    private bool isTeamList => !string.IsNullOrEmpty(TeamId) && !string.IsNullOrEmpty(TaskListId);
+    // flag de carga mientras se comprueba si el usuario tiene acceso a la nota
+    private bool loading;
+    // clase con la estructura de datos correspondiente a una lista de tareas
+    public class TaskList
+    {
+        public string? Id { get; set; }
+        public string Title { get; set; } = "";
+        public string Description { get; set; } = "";
+        public Dictionary<string, bool> Tasks { get; set; } = new Dictionary<string, bool>();
+    }
+    // lista de listas de tareas
+    private List<TaskList> taskLists = [];
+    // tarea seleccionada para mostrara en detalle
+    private TaskList? selectedTaskList;
+    // nombre de usuario y user_id del usuario actual
+    private string username = null!;
+    private string uid = null!;
+    // referencia al componente de cuadro de diálogo
+    private DialogBox dialogBox = null!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // recupero la información del usuario de la memoria local
+        this.username = await LocalStorage.GetItemAsync<string>("username") ?? "";
+        this.uid = await LocalStorage.GetItemAsync<string>("user_id") ?? "";
+        // si es una lista de tareas de usuario
+        if (!isTeamList)
+        {
+            // actualizo la información local de las tareas
+            await UpdateTaskLists();
+        }
+        // si es una lista de tareas de equipo
+        else
+        {
+            await LoadTeamListAsync();
+        }
+    }
+
+    // carga la nota de equipo indicada por la url
+    private async Task LoadTeamListAsync()
+    {
+        loading = true;
+        StateHasChanged();
+        try {
+            this.TeamName = await DatabaseService.GetDataAsync<string>($"team-data/{TeamId!}/Name");
+            string adminUid = await DatabaseService.GetDataAsync<string>($"team-data/{TeamId!}/Admin");
+            this.isAdmin = this.uid == adminUid;
+            this.selectedTaskList = await DatabaseService.GetDataAsync<TaskList>($"team-data/{TeamId!}/Tasklists/{TaskListId!}");
+        } catch (Exception) {
+            // no se realiza ninguna acción puesto que la vista mostrará el error
+        }
+        loading = false;
+        StateHasChanged();
+    }
+
+    // actualiza la lista de listas de tareas
+    private async Task UpdateTaskLists()
+    {
+        // guardo una referencia a la lista seleccionada
+        string? selected = selectedTaskList?.Id;
+        // recibo las listas de la base de datos
+        var taskListsDictionary = await DatabaseService.GetListAsync<TaskList>($"user-data/{uid}/tasklists");
+        // limpio la lista local de listas
+        this.taskLists.Clear();
+        // transfiero las listas recibidas a la lista local
+        this.taskLists = taskListsDictionary.Select(pair =>
+        {
+            var tasklist = pair.Value;
+            tasklist.Id = pair.Key;
+            return tasklist;
+        }).ToList();
+        // si había una lista seleccionada, la vuelvo a seleccionar
+        if (selected != null) selectedTaskList = taskLists.FirstOrDefault(t => t.Id == selected);
+        StateHasChanged();
+    }
+
+    // muestra los diálogos pertinentes y crea añade una nueva lista de tareas
+    private async Task CreateNewTaskList ()
+    {
+        var title = await dialogBox.StringAsync("Give your new task list a name:");
+        if (title == "" || title == null) return;
+        var description = await dialogBox.StringAsync("Give your new task list a description:");
+        if (description == null) return;
+        var tasks = await dialogBox.DictionaryAsync("What would you need to do to achieve this goal?");
+        if (tasks == null) return;
+        await AddTaskList(title, description, tasks);
+        await UpdateTaskLists();
+        await dialogBox.InfoAsync($"Task list '{title}' added successfully");
+    }
+
+    // inserta una nueva lista de tareas a la base de datos
+    private async Task<string> AddTaskList (string title, string description, Dictionary<string, bool> tasks)
+    {
+        // creo un nuevo nodo en la base de datos con Id autogenerado y título
+        var newList = await DatabaseService.AddDataAsync($"user-data/{uid}/tasklists", new {
+            Title = title,
+            Description = description
+        });
+        // le añado en una petición independiente el nodo con la lista de tareas
+        // este nodo no puede añadirse en la misma petición que el título, de lo
+        // contrario el diccionario no se serializa correctamente y da error
+        await DatabaseService.SetDataAsync($"user-data/{uid}/tasklists/{newList}/Tasks", tasks);
+        // devuelvo el Id de la nueva lista de tareas
+        return newList;
+    }
+
+    // marca una tarea como completada/en progreso
+    private async Task ToggleTaskCompleted (string id, string taskId, bool taskStatus)
+    {
+        if (!isTeamList)
+        {
+            await DatabaseService.SetDataAsync($"user-data/{uid}/tasklists/{id}/Tasks/{taskId}", !taskStatus);
+            await UpdateTaskLists();
+        }
+        else
+        {
+            await DatabaseService.SetDataAsync($"team-data/{TeamId}/Tasklists/{TaskListId}/Tasks/{taskId}", !taskStatus);
+            await LoadTeamListAsync();
+        }
+    }
+
+    // muestra el diálogo de confirmación, borra una lista de tareas
+    private async Task RemoveTaskList (string id, string title)
+    {
+        var confirm = await dialogBox.BoolAsync($"Are you sure you want to delete '{title}'?");
+        if (confirm)
+        {
+            if (!isTeamList)
+            {
+                await DatabaseService.RemoveDataAsync($"user-data/{uid}/tasklists/{id}");
+                this.selectedTaskList = null;
+                await UpdateTaskLists();
+
+            }
+            else
+            {
+                await DatabaseService.RemoveDataAsync($"team-data/{TeamId!}/Tasklists/{id}/");
+                Navigation.NavigateTo("/teams");
+            }
+        }
+    }
+
+}

@@ -1,0 +1,270 @@
+@page "/notes"
+@page "/notes/{teamId}/{noteId}"
+@using rtask.Pages.Components
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@inject Services.FirebaseRealtimeDatabaseService DatabaseService
+@inject Blazored.LocalStorage.ILocalStorageService LocalStorage
+@inject NavigationManager Navigation
+
+@attribute [Authorize]
+
+<AuthorizeView>
+
+    <Authorized>
+
+        <DialogBox @ref="dialogBox" />
+        
+        <div id="notes">
+
+            @if (!isTeamNote) {
+                <img src="img/ui/list.png" alt="Show/hide list" id="showhide"
+                @onclick="@(() => { showHide = showHide == "" ? "hide" : ""; })"/>
+
+                <div class="notes-list prev-sel @(showHide)">
+
+                    @foreach (var note in notes)
+                    {
+                        <span @onclick="@(() => { this.currentNote = note; mode = "edit"; StateHasChanged(); })">
+                            @(note.Title)
+                        </span>
+                    }
+
+                    <span @onclick="@(() => { this.currentNote = new(); mode = "create"; StateHasChanged(); })"> <b>+</b> New note</span>
+                
+                </div>
+            }
+
+            <div class="current-note">
+
+                @if (currentNote != null)
+                {
+
+                    <input type="text" id="title" placeholder="Title" tabindex="1" class="@(showHide == "hide" ? "padded" : "")"
+                    @bind-value="currentNote.Title" @bind-value:event="onchange">
+
+                    <textarea id="content" cols="30" rows="10" placeholder="Note content..." tabindex="2"
+                    @bind-value="currentNote.Content" @bind-value:event="onchange"></textarea>
+
+                    @if (mode == "create") { <button @onclick="@(async () => {
+
+                        await AddNote(currentNote.Title, currentNote.Content); })" tabindex="3">Add new</button> 
+
+                    }
+                    else if (mode == "edit") {
+
+                        <div>
+                            @if (!isTeamNote) { 
+                                <button @onclick="@(async () => { await UpdateNote(currentNote.Id, currentNote.Title, currentNote.Content); })" tabindex="3">Update</button>
+                                <button @onclick="@(async () => { await RemoveNote(currentNote.Id, currentNote.Title); })" class="red">Remove</button>
+                            }
+                            else
+                            {
+                                <button @onclick="@(async () => { await UpdateNote(NoteId!, currentNote.Title, currentNote.Content); })" tabindex="3">Update</button>
+                                @if (isAdmin) { <button @onclick="@(async () => { await RemoveNote(NoteId!, currentNote.Title); })" class="red">Remove</button> }
+                            }
+                        </div>
+                        
+                    }
+                }
+                else
+                {
+                    @if (!isTeamNote)
+                    {
+                        @if (notes.Count == 0) {
+                            <span style="padding: 1em;">Create your first note by clicking the 'New note' button!</span>                        
+                        } else {
+                            <span style="padding: 1em;">Write or edit your notes by clicking on the left-side panel!</span>
+                        }
+                    }
+                    else
+                    {
+                        <span style="padding: 1em;">
+                            @if (loading)
+                            {
+                                <img style="max-height: 100px; width: 100px;" src="img/status/loading.gif" alt="Loading" />
+                            }
+                            else
+                            {
+                                <span class="forbidden">
+                                    You do not have access to this note, or it does not exist :(
+                                    <br /><br />
+                                    <a href="/notes">View your personal notes</a>
+                                </span>
+                            }
+                        </span>
+                    }
+                }
+            </div>
+
+        </div>
+
+    </Authorized>
+
+    <NotAuthorized>
+        <NavigateToLogin />
+    </NotAuthorized>
+
+</AuthorizeView>
+
+@code {
+    // parámetros de referencia en caso de que se esté mostrando una nota de equipo
+    [Parameter]
+    public string? TeamId { get; set; } = null;
+    [Parameter]
+    public string? NoteId { get; set; } = null;
+    
+    // nombre del equipo al que pertenece la nota (si es de equipo)
+    private string? TeamName = null;
+
+    // flag de control para comprobar si el usuario es el administrador de la nota (en caso de que sea una nota de equipo)
+    private bool isAdmin = false;
+    
+    // flag de control para mostrar el modo notas de usuario/equipo
+    private bool isTeamNote => !string.IsNullOrEmpty(TeamId) && !string.IsNullOrEmpty(NoteId);
+    // flag de carga mientras se comprueba si el usuario tiene acceso a la nota
+    private bool loading;
+
+    // clase con la estructura de datos correspondiente a una nota
+    public class Note {
+        public string Id { get; set; } = null!;
+        public string Title { get; set; } = null!;
+        public string Content { get; set; } = null!;
+    }
+    // lista local de notas
+    private List<Note> notes = [];
+    // referencia a la nota seleccionada
+    private Note? currentNote;
+    // user_id del usuario actual
+    private string uid = null!;
+    // modo de presentación de la vista
+    private string mode = "create";
+    // control para mostrar/ocultar el botón de mostrar/ocultar la lista de notas
+    private string showHide = "";
+    // referencia al componente de cuadro de diálogo
+    private DialogBox dialogBox = null!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // recupero el user_id de la memoria local
+        this.uid = await LocalStorage.GetItemAsync<string>("user_id") ?? "";
+        // si es una nota de usuario
+        if (!isTeamNote)
+        {
+            // actualizo la lista local de notas
+            await UpdateNotesList();
+        }
+        // si es una nota de equipo
+        else
+        {
+            await LoadTeamNoteAsync();
+        }
+    }
+
+    // carga la nota de equipo indicada por la url
+    private async Task LoadTeamNoteAsync()
+    {
+        loading = true;
+        mode = "edit";
+        StateHasChanged();
+        try {
+            this.TeamName = await DatabaseService.GetDataAsync<string>($"team-data/{TeamId!}/Name");
+            string adminUid = await DatabaseService.GetDataAsync<string>($"team-data/{TeamId!}/Admin");
+            this.isAdmin = this.uid == adminUid;
+            this.currentNote = await DatabaseService.GetDataAsync<Note>($"team-data/{TeamId!}/Notes/{NoteId!}");
+        } catch (Exception) {
+            // no se realiza ninguna acción puesto que la vista mostrará el error
+        }
+        loading = false;
+        StateHasChanged();
+    }
+
+    // actualiza la lista local de notas recuperando los datos de la base de datos
+    private async Task UpdateNotesList()
+    {
+        // recibo los datos
+        var notesDictionary = await DatabaseService.GetListAsync<Note>($"user-data/{uid}/notes");
+        // limpio la lista local
+        this.notes.Clear();
+        // relleno la lista local con los datos recuperados
+        this.notes = notesDictionary.Select(pair =>
+        {
+            var note = pair.Value;
+            note.Id = pair.Key;
+            return note;
+        }).ToList();
+        StateHasChanged();
+    }
+
+    // añade una nota a la base de datos
+    private async Task AddNote (string title, string content)
+    {
+        // añado la nota a la base de datos y guardo su Id
+        var newNoteId = await DatabaseService.AddDataAsync($"user-data/{uid}/notes", new {
+            Title = title,
+            Content = content
+        });
+        // actualizo la lista local de notas
+        await UpdateNotesList();
+        // defino la nueva nota creada como nota seleccionada
+        this.currentNote = notes.FirstOrDefault(n => n.Id == newNoteId);
+        // al haber creado una nota, ahora estamos editando
+        this.mode = "edit";
+        StateHasChanged();
+        await dialogBox.InfoAsync($"Created new note '{title}'");
+    }
+
+    // actualiza en la base de datos la información de la nota con id "id"
+    private async Task UpdateNote (string id, string title, string content)
+    {
+        // modifico los datos en la base de datos
+        if (isTeamNote)
+        {
+            await DatabaseService.SetDataAsync($"team-data/{TeamId}/Notes/{id}", new {
+                Title = title,
+                Content = content
+            });
+        }
+        else
+        {
+            await DatabaseService.SetDataAsync($"user-data/{uid}/notes/{id}", new {
+                Title = title,
+                Content = content
+            });
+        }
+        // actualizo la información local
+        await UpdateNotesList();
+        await dialogBox.InfoAsync($"Updated note '{title}'");
+    }
+
+    // borra la nota con id "id" de la base de datos
+    private async Task RemoveNote (string id, string title)
+    {
+        // muestra el diálogo de confirmación
+        var confirm = await dialogBox.BoolAsync($"Are you sure you want to delete '{title}'?");
+        if (confirm)
+        {
+            // si el usuario confirma la acción, borro la nota de la base de datos
+            if (isTeamNote && isAdmin)
+            {
+                if (await dialogBox.BoolAsync($"This note is part of a team. Deleting it will also delete it for everyone else. Would you like to proceed?"))
+                {
+                    await DatabaseService.RemoveDataAsync($"team-data/{TeamId}/notes/{id}");
+                    Navigation.NavigateTo("/teams");
+                }
+            }
+            else
+            {
+                await DatabaseService.RemoveDataAsync($"user-data/{uid}/notes/{id}");
+                // marco la nota seleccionada como null
+                this.currentNote = null;
+                // paso a modo "crear"
+                this.mode = "create";
+                // actualizo la lista local de notas
+                await UpdateNotesList();
+                await dialogBox.InfoAsync($"Deleted note '{title}'");
+            }
+        }
+    }
+
+}

@@ -1,0 +1,562 @@
+@page "/teams"
+@using rtask.Pages.Components
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using rtask.Pages.Tasks
+@inject Services.FirebaseRealtimeDatabaseService DatabaseService
+@inject Blazored.LocalStorage.ILocalStorageService LocalStorage
+@inject NavigationManager Navigation
+
+@attribute [Authorize]
+
+<AuthorizeView>
+
+    <Authorized>
+
+        <DialogBox @ref="dialogBox" />
+        
+        @if (selectedTeam == null)
+        {
+            <div id="teams">
+                <div class="create prev-sel" @onclick="CreateNewTeam">+</div>
+                
+                @if (loading) { <img class="loading-status" src="img/status/loading.gif" alt="Loading"/> }
+
+                else if (teamList.Count == 0) { <span class="empty">Create a team with the '+' button!</span> }
+
+                @foreach (var team in teamList.OrderBy(t => t.Invitation))
+                {
+                    @if (team.Invitation != null)
+                    {
+                        <div class="team prev-sel invitation">
+
+                            <span>(Invitation)</span>
+
+                            <h1>@(team.Name)</h1>
+
+                            <span class="description">"@(team.Description)"</span>
+
+                            <div class="invitation-controls">
+                                <button @onclick="@(async () => { if (team.Id != null) await AcceptInvitation(team.Id, team.Name); })">Accept</button>
+                                <button @onclick="@(async () => { if (team.Id != null) await DeclineInvitation(team.Id, team.Name); })" class="red">Decline</button>
+                            </div>
+
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="team prev-sel" @onclick="@(() => { this.selectedTeam = team; })">
+
+                            <h1>@(team.Name)</h1>
+
+                            <span class="description">"@(team.Description)"</span>
+
+                        </div>
+                    }
+                }
+            </div>
+        }
+        else 
+        {
+            int memberCount = 0;
+            <div class="detailed-team">
+
+                <div class="team-info">
+
+                    <button class="return prev-sel" @onclick="@(() => { this.selectedTeam = null;})">
+                        @("<")
+                    </button>
+
+                    <h1 class="prev-sel">@(selectedTeam.Name)</h1>
+
+                    <span>@(selectedTeam.Description)</span>
+
+                    <div class="members-title">
+                        <h2 class="prev-sel"> Members </h2>
+                        @if (selectedTeam.Admin == uid) { <div class="invite prev-sel" @onclick="InviteMember">+</div> }
+                    </div>
+
+                    <div class="members">
+                        @foreach (var member in selectedTeam.Usernames)
+                        {
+                            memberCount++;
+                            <span> @(member.Key)
+                                @if (!member.Value) { <span class="invited"> (Invited)</span> }
+                                else if (memberCount == 1) { <span class="invited"> (Administrator)</span> }
+                                @if (selectedTeam.Admin == uid && memberCount > 1) { <span class="kick" title="Kick user" @onclick="@(async () => { if (selectedTeam.Id != null) await KickMember(selectedTeam.Id, member.Key); })">✖</span> }
+                            </span>
+                        }
+                        @if (selectedTeam.Admin != uid)
+                        {
+                            <button class="leave-team red prev-sel"
+                            @onclick="@(async () => {
+                                if (selectedTeam.Id != null)
+                                {
+                                    if (await dialogBox.BoolAsync("Are you sure you want to leave this team?")) await LeaveTeam(selectedTeam.Id, selectedTeam.Name);
+                                }
+                            })">
+                                Leave team
+                            </button>
+                        }
+                        else
+                        {
+                            <button class="leave-team red prev-sel"
+                            @onclick="@(async () => {
+                                if (selectedTeam.Id != null)
+                                {
+                                    if (await dialogBox.BoolAsync("Are you sure you want to delete this team?")) await DeleteTeam(selectedTeam.Id, selectedTeam.Name);
+                                }
+                            })">
+                                Delete team
+                            </button>
+                        }
+                    </div>
+                </div>
+
+                <div class="team-data">
+                    <div class="notes">
+                        <h2>Notes</h2>
+
+                        @if (selectedTeam.Admin == uid) { <div class="create prev-sel" @onclick=CreateNewNote>+</div> }
+
+                        @if (selectedTeam.Notes.Count == 0) {
+
+                            <span class="list-is-empty">
+                                There are no notes associated to this team.
+                                @if (selectedTeam.Admin == uid) {
+                                    <br/><br/>
+                                    @("Create one with the '+' button")
+                                }
+                            </span>
+                        }
+                        else {
+                            <div class="team-data-list">
+                                @foreach (var note in selectedTeam.Notes)
+                                {
+                                    <span class="instance">
+
+                                        <span class="team-data-instance" @onclick='() => Navigation.NavigateTo($"/notes/{selectedTeam.Id}/{note.Id}", true)'>
+                                            @(note.Title)
+                                        </span>
+                                        
+                                        @if (selectedTeam.Admin == uid)
+                                        {
+                                            <span class="delete" title="Delete" @onclick="@(async () => { await DeleteNote(note.Id); })">✖</span>
+                                        }
+                                        
+                                    </span>
+                                }
+                            </div>
+                        }
+
+                    </div>
+                    <div class="task-lists">
+                        <h2>Task Lists</h2>
+
+                        @if (selectedTeam.Admin == uid) { <div class="create prev-sel" @onclick=CreateNewTaskList>+</div> }
+
+                        @if (selectedTeam.TaskLists.Count == 0) {
+
+                            <span class="list-is-empty">
+                                There are no task lists associated to this team.
+                                @if (selectedTeam.Admin == uid) {
+                                    <br/><br/>
+                                    @("Create one with the '+' button")
+                                }
+                            </span>
+
+                        }
+                        else {
+                            <div class="team-data-list">
+                                @foreach (var tasklist in selectedTeam.TaskLists)
+                                {
+                                    <span class="instance">
+
+                                        <span class="team-data-instance" @onclick='() => Navigation.NavigateTo($"/tasks/{selectedTeam.Id}/{tasklist.Id}", true)'>
+                                            @(tasklist.Title)
+                                        </span>
+
+                                        @if (selectedTeam.Admin == uid)
+                                        {
+                                            <span class="delete" title="Delete" @onclick="@(async () => { if (tasklist.Id != null) await DeleteTaskList(tasklist.Id); })">✖</span>
+                                        }
+                                    
+                                    </span>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+
+            </div>
+        }
+
+
+    </Authorized>
+
+    <NotAuthorized>
+        <NavigateToLogin />
+    </NotAuthorized>
+
+</AuthorizeView>
+
+@code {
+    private DialogBox dialogBox = null!;
+    private string username = null!;
+    private string uid = null!;
+    // clase de estructura de datos para insertar/leer equipos
+    private class Team {
+        public bool? Invitation { get; set; }
+        public string? Id { get; set; }
+        public string Name { get; set; } = "";
+        public string Description { get; set; } = "";
+        public string Admin { get; set; } = "";
+        public Dictionary<string, bool> Members { get; set; } = new();
+        public Dictionary<string, bool> Usernames { get; set; } = new();
+        public List<Note> Notes { get; set; } = new();
+        public List<TaskList> TaskLists { get; set; } = new();
+    }
+    // herencias de clase
+    private class Note : Notes.Note;
+    private class TaskList : Tasks.TaskList;
+    // lista local provisional de equipos (invitación/equipo)
+    private Dictionary<string, bool> userTeamList = [];
+    // lista local de equipos
+    private List<Team> teamList = [];
+    // equipo seleccionado
+    private Team? selectedTeam = null;
+    // flag para mostrar el icono de carga mientras se actualizan los datos 
+    private bool loading = false;
+    
+    protected override async Task OnInitializedAsync()
+    {
+        this.username = await LocalStorage.GetItemAsync<string>("username") ?? "";
+        this.uid = await LocalStorage.GetItemAsync<string>("user_id") ?? "";
+        await UpdateUserTeamsList();
+    }
+
+    // activa/desactiva el estado de carga de la página
+    private void toggleLoadingStatus()
+    {
+        this.loading = !loading;
+        StateHasChanged();
+    }
+
+    // actualiza la lista local de equipos
+    private async Task UpdateUserTeamsList()
+    {
+        toggleLoadingStatus(); // activo el flag de carga
+
+        // guardo una referencia al equipo seleccionado y borro la actual
+        string? selected = this.selectedTeam?.Id;
+        this.selectedTeam = null;
+
+        // limpio la lista local de equipos
+        this.teamList.Clear();
+        
+        // recupero de la base de datos la lista con los ids de los equipos asociados al usuario actual
+        this.userTeamList = await DatabaseService.GetDataAsync<Dictionary<string, bool>>($"user-data/{uid}/teams");
+        
+        // si la lista está vacía (~ el usuario no está en ningún equipo)
+        if (userTeamList == null)
+        {
+            toggleLoadingStatus(); // desactivo el flag de carga
+            return;
+        }
+
+        // por cada equipo recuperado, llamo al método que actualiza sus datos
+        foreach (var team in userTeamList) await UpdateTeam(team.Key, team.Value);
+
+        // si había un equipo seleccionado, vuelvo a seleccionarlo (en caso de que aún exista)
+        if (selected != null) this.selectedTeam = this.teamList.FirstOrDefault(t => t.Id == selected) ?? null;
+
+        toggleLoadingStatus(); // desactivo el flag de carga
+    }
+
+    // actualiza la información de un equipo concreto
+    private async Task UpdateTeam(string id, bool status)
+    {
+        // guardamos el nombre y la descripción del equipo
+        var name = await DatabaseService.GetDataAsync<string>($"team-data/{id}/Name");
+        var description = await DatabaseService.GetDataAsync<string>($"team-data/{id}/Description");
+
+        // si el estado es "false", el usuario está invitado al equipo pero aún no ha aceptado
+        if (!status)
+        {
+            // por lo cual creamos una nueva instancia de equipo solo con los datos disponibles para el usuario
+            this.teamList.Add(new Team{
+                Invitation = true,
+                Id = id,
+                Name = name,
+                Description = description
+            });
+        }
+        // si el estado es "true", el usuario ya es parte del equipo, por lo cual recuperamos toda la información
+        else
+        {
+            // guardamos la lista de notas
+            var notesDictionary = await DatabaseService.GetListAsync<Note>($"team-data/{id}/Notes");
+            List<Note> notes = notesDictionary.Select(pair =>
+            {
+                var note = pair.Value;
+                note.Id = pair.Key;
+                return note;
+            }).ToList();
+
+            // guardamos la lista de listas de tareas
+            var taskListsDictionary = await DatabaseService.GetListAsync<TaskList>($"team-data/{id}/Tasklists");
+            List<TaskList> tasklists = taskListsDictionary.Select(pair =>
+            {
+                var note = pair.Value;
+                note.Id = pair.Key;
+                return note;
+            }).ToList();
+
+            // guardamos la lista de miembros
+            var members = await DatabaseService.GetDataAsync<Dictionary<string, bool>>($"team-data/{id}/Members");
+
+            // creamos un nuevo diccionario en el que guardar los nombres de usuario en vez de los Ids
+            Dictionary<string, bool> usernames = new Dictionary<string, bool>();
+
+            // guardamos el nombre de usuario del administrador
+            string adminId = await DatabaseService.GetDataAsync<string>($"team-data/{id}/Admin");
+            string admin = await DatabaseService.GetUsername(adminId);
+            usernames.Add(admin, true);
+
+            // si hay miembros en el equipo, guardamos el nombre de usuario de cada uno
+            if (members != null && members.Count != 0)
+            {
+                foreach (var member in members)
+                {
+                    string username = await DatabaseService.GetUsername(member.Key);
+                    usernames.Add(username, member.Value);
+                }                
+            }
+            
+            // creamos un nuevo equipo con la información recopilada
+            var team = new Team{
+                Id = id,
+                Admin = adminId,
+                Name = name,
+                Description = description,
+                Members = members ?? new Dictionary<string, bool>(),
+                Usernames = usernames,
+                Notes = notes,
+                TaskLists = tasklists
+            };
+            
+            // añadimos el nuevo equipo creado a la lista local de equipos
+            this.teamList.Add(team);
+        }
+        StateHasChanged();
+    }
+
+    // crea un nuevo equipo en la base de datos
+    private async Task CreateNewTeam()
+    {
+        // mostramos el cuadro de diálogo para introducir el nombre
+        var name = await dialogBox.StringAsync("Give your new team a name:");
+        if (name == "" || name == null) return;
+        // mostramos el cuadro de diálogo para introducir la descripción
+        var description = await dialogBox.StringAsync("Give your new team a description:");
+        if (description == null) return;
+
+        
+        toggleLoadingStatus(); // activo el flag de carga
+
+        // añado el nuevo equipo a la base de datos
+        var newTeamId = await DatabaseService.AddDataAsync("team-data", new Team{
+            Name = name,
+            Description = description,
+            Admin = uid
+        });
+
+        // añado el nuevo equipo a la lista de equipos del usuario actual
+        await DatabaseService.SetDataAsync($"user-data/{uid}/teams/{newTeamId}", true);
+        
+        await UpdateUserTeamsList();
+        
+        toggleLoadingStatus(); // desactivo el flag de carga
+    }
+
+    // crea una nueva nota en el equipo seleccionado
+    private async Task CreateNewNote()
+    {
+        // mostramos el cuadro de diálogo para introducir el nombre
+        string? title = await dialogBox.StringAsync("Give your new note a title");
+        if (title == "" || title == null) return;
+
+        // añadimos la nueva nota a la base de datos
+        await DatabaseService.AddDataAsync($"team-data/{selectedTeam?.Id}/Notes", new {
+            Title = title
+        });
+
+        await UpdateUserTeamsList();
+        await dialogBox.InfoAsync($"New note {title} created successfully");
+    }
+
+    // borra una nota del equipo seleccionado
+    private async Task DeleteNote(string id)
+    {
+        // mostramos un diálogo de confirmación
+        if (await dialogBox.BoolAsync("Are you sure you want to delete this note? This action cannot be reversed."))
+        {
+            // si el usuario confirma la acción, borramos la nota de la base de datos
+            await DatabaseService.RemoveDataAsync($"team-data/{selectedTeam?.Id}/Notes/{id}");
+            await UpdateUserTeamsList();
+            await dialogBox.InfoAsync("Note deleted");
+        }
+    }
+
+    // crea una nueva lista de tareas en el equipo seleccionado
+    private async Task CreateNewTaskList()
+    {
+        // recibimos un título
+        string? title = await dialogBox.StringAsync("Give your new task list a title");
+        if (title == "" || title == null) return;
+        // recibimos una descripción
+        string? description = await dialogBox.StringAsync("Give your new task list a description");
+        if (description == null) return;
+        var tasks = await dialogBox.DictionaryAsync("What would you need to do to achieve this goal?");
+        if (tasks == null) return;
+
+        // creo un nuevo nodo en la base de datos con Id autogenerado y título
+        var newList = await DatabaseService.AddDataAsync($"team-data/{selectedTeam?.Id}/Tasklists", new {
+            Title = title,
+            Description = description
+        });
+        // le añado en una petición independiente el nodo con la lista de tareas
+        // este nodo no puede añadirse en la misma petición que el título, de lo
+        // contrario el diccionario no se serializa correctamente y da error
+        await DatabaseService.SetDataAsync($"team-data/{selectedTeam?.Id}/Tasklists/{newList}/Tasks", tasks);
+
+        await UpdateUserTeamsList();
+        await dialogBox.InfoAsync($"New task list {title} created successfully");
+    }
+    
+    //  borra una lista de tareas del equipo seleccionado
+    private async Task DeleteTaskList(string id)
+    {
+        // mostramos un diálogo de confirmación
+        if (await dialogBox.BoolAsync("Are you sure you want to delete this task list? This action cannot be reversed."))
+        {
+            // si el usuario confirma la acción, borramos la lista de tareas de la base de datos
+            await DatabaseService.RemoveDataAsync($"team-data/{selectedTeam?.Id}/Tasklists/{id}");
+            await UpdateUserTeamsList();
+            await dialogBox.InfoAsync("Task list deleted");
+        }
+    }
+
+    // borra un equipo de la base de datos
+    private async Task DeleteTeam (string teamId, string teamName)
+    {
+        // mostramos dos diálogos de confirmación:
+        //      · el primero pide al usuario que confirme la acción (Sí/No)
+        //      · el segundo pide al usuario que introduzca el nombre del equipo para confirmar la acción
+        if (!await dialogBox.BoolAsync($"This action will permanently delete all notes and task lists associated to this team. Proceed?")) return;
+        if (await dialogBox.StringAsync($"To confirm this deletion, please input this team's name:") != teamName) return;
+        // si el usuario confirma la acción, borramos todas las referencias y datos del equipo de la base de datos
+        await DatabaseService.RemoveDataAsync($"team-data/{teamId}");
+        await DatabaseService.RemoveDataAsync($"user-data/{uid}/teams/{teamId}");
+        // quitamos la selección de equipo, puesto que correspondería a un equipo que ya no existe
+        this.selectedTeam = null;
+        await UpdateUserTeamsList();
+        await dialogBox.InfoAsync($"Team '{teamName}' has been deleted.");
+    }
+
+    // invita a un usuario a ser miembro del equipo
+    private async Task InviteMember()
+    {
+        // recibimos el nombre de usuario
+        var username = await dialogBox.StringAsync("Invite user:");
+        if (username == "" || username == null) return;
+        // si el nombre de usuario no está vacío, intentamos recuperar el ID correspondiente de la base de datos
+        var userId = await DatabaseService.GetUserId(username);
+        if (userId == "" || userId == null) 
+        {
+            // si el ID no se encuentra, el usuario no existe, por lo que mostramos un error
+            await dialogBox.InfoAsync($"Invite failed; user {username} not found.");
+            return;
+        }
+        else 
+        {
+            // si el usuario se encuentra, lo añadimos al equipo
+            try {
+                if (selectedTeam != null && selectedTeam.Id != null)
+                {
+                    selectedTeam?.Members.Add(userId, false);
+                    selectedTeam?.Usernames.Add(username, false);
+                    // el nuevo usuario se añade a la lista de miembros con valor "false"
+                    // esto indica al proyecto que su participación en este grupo aún no
+                    // está confirmada, sino que el usuairo está invitado pero no ha aceptado aún
+                    await DatabaseService.SetDataAsync($"user-data/{userId}/teams/{selectedTeam?.Id}", false);
+                    await DatabaseService.SetDataAsync($"team-data/{selectedTeam?.Id}/Members/{userId}", false);
+                    StateHasChanged();
+                    await dialogBox.InfoAsync($"{username} has been invited to join the group.");
+                }
+            } catch (Exception) {
+                // en caso de error
+                await dialogBox.InfoAsync("There was an error inviting that user. Please try again later.");
+            }
+        }
+    }
+
+    // expulsa a un miembro del equipo
+    private async Task KickMember(string teamId, string username)
+    {
+        // recibimos el ID correspondiente al nombre de usuario de la base de datos
+        var userId = await DatabaseService.GetUserId(username);
+        // mostramos un diálogo de confirmación
+        if (await dialogBox.BoolAsync($"Are you sure you want to kick '{username}' from the team?"))
+        {
+            // borramos todas las referencias al usuario del nodo del equipo en la base de datos
+            selectedTeam?.Members.Remove(userId);
+            selectedTeam?.Usernames.Remove(username);
+            await DatabaseService.RemoveDataAsync($"team-data/{teamId}/Members/{userId}");
+            await DatabaseService.RemoveDataAsync($"user-data/{uid}/teams/{teamId}");
+            StateHasChanged();
+            await dialogBox.InfoAsync($"'{username}' was kicked from the team");
+        }
+    }
+
+    // acepta una invitación a un equipo
+    private async Task AcceptInvitation(string teamId, string teamName)
+    {
+        // borramos la referencia local del equipo, puesto que esta está incompleta (en modo 'invitación')
+        var team = this.teamList.FirstOrDefault(t => t.Id == teamId);
+        if (team != null ) this.teamList.Remove(team);
+        // marcamos la participación del usuario en el equipo como "true" (invitación aceptada, el usuario ahora es miembro)
+        await DatabaseService.SetDataAsync($"team-data/{teamId}/Members/{uid}", true);
+        await DatabaseService.SetDataAsync($"user-data/{uid}/teams/{teamId}", true);
+        // actualizamos la información local para que refleje los cambios incluyendo los datos completos del equipo
+        await UpdateUserTeamsList();
+        await dialogBox.InfoAsync($"Joined team '{teamName}'");
+    }
+
+    // rechaza una invitación a un equipo
+    private async Task DeclineInvitation(string teamId, string teamName)
+    {
+        // borramos la referencia local del equipo
+        var team = this.teamList.FirstOrDefault(t => t.Id == teamId);
+        if (team != null ) this.teamList.Remove(team);
+        // borramos la participación del usuario en el equipo, consecuentemente "rechazando" la invitación
+        await DatabaseService.RemoveDataAsync($"team-data/{teamId}/Members/{uid}");
+        await DatabaseService.RemoveDataAsync($"user-data/{uid}/teams/{teamId}");
+        // actualizamos la información local para que refleje los cambios
+        await UpdateUserTeamsList();
+        await dialogBox.InfoAsync($"Declined invitation to team '{teamName}'");
+    }
+
+    // deja un equipo
+    private async Task LeaveTeam(string teamId, string teamName)
+    {
+        // borramos la participación del usuario en el equipo, consecuentemente dejándolo
+        await DatabaseService.RemoveDataAsync($"team-data/{teamId}/Members/{uid}");
+        await DatabaseService.RemoveDataAsync($"user-data/{uid}/teams/{teamId}");
+        // quitamos la selección de equipo, puesto que correspondería a un equipo del que el usuario ya no es parte
+        this.selectedTeam = null;
+        // actualizamos la información local para reflejar los cambios
+        await UpdateUserTeamsList();
+        await dialogBox.InfoAsync($"You have left team '{teamName}'");
+    }
+}

@@ -1,0 +1,112 @@
+@page "/"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@inject Blazored.LocalStorage.ILocalStorageService LocalStorage
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+@attribute [Authorize]
+
+<AuthorizeView>
+
+    <Authorized>
+        <div class="welcome prev-sel">
+            @if (username != "") { <span>Welcome, @(username)!</span> }
+            else { <span>Welcome!</span> }
+
+            <span>What would you like to do today?</span>
+            <div class="activities">
+                <div @onclick="@(() => { Navigation.NavigateTo("/notes", true); })">
+                    <span>Access your notes</span>
+                    <img src="img/home/note.png" alt="Notes">
+                    <span>Write down important information and organize your ideas</span>
+                </div>
+                <div @onclick="@(() => { Navigation.NavigateTo("/tasks", true); })">
+                    <span>Organize your task lists</span>
+                    <img src="img/home/task.png" alt="Notes">
+                    <span>Break down your goals into clear points to maximize your efficiency</span>
+                </div>
+                <div @onclick="@(() => { Navigation.NavigateTo("/teams", true); })">
+                    <span>Manage your teams</span>
+                    <img src="img/home/team.png" alt="Notes">
+                    <span>Designate tasks and put your combined skills to work</span>
+                </div>
+            </div>
+        </div>
+    </Authorized>
+
+    <NotAuthorized>
+        <div class="welcome">
+            <span>Welcome to r--task!</span>
+
+            <span>Write <b>notes</b>, define <b>tasks</b>, and organize with your team to <b>achieve your goals</b> efficiently.</span>
+
+            <div id="carousel">
+                <img src="img/welcome/notes.jpg" alt="Notes">
+                <img src="img/welcome/tasks.jpg" alt="Tasks">
+                <img src="img/welcome/teams.jpg" alt="Teams">
+            </div>
+
+            <a href="/signup"> <span>Sound good? Register now!</span> </a>
+        </div>
+    </NotAuthorized>
+
+</AuthorizeView>
+
+<script>
+    window.startCarousel = function () {
+        const carousel = document.getElementById("carousel");
+        if (carousel == null) return;
+        const images = carousel.getElementsByTagName('img');
+        let index = 0;
+
+        function smoothScroll(targetPosition) {
+            const startPosition = carousel.scrollLeft;
+            const distance = targetPosition - startPosition;
+            const duration = 1000; // Duration of the scroll in milliseconds
+            let startTime = null;
+
+            function animation(currentTime) {
+                if (startTime === null) startTime = currentTime;
+                const timeElapsed = currentTime - startTime;
+                const run = ease(timeElapsed, startPosition, distance, duration);
+                carousel.scrollLeft = run;
+                if (timeElapsed < duration) requestAnimationFrame(animation);
+            }
+
+            function ease(t, b, c, d) {
+                t /= d / 2;
+                if (t < 1) return c / 2 * t * t + b;
+                t--;
+                return -c / 2 * (t * (t - 2) - 1) + b;
+            }
+
+            requestAnimationFrame(animation);
+        }
+
+        function showNextImage() {
+            index = (index + 1) % images.length;
+            var width = images[index].offsetWidth+1;
+            smoothScroll(index * width);
+        }
+
+        carousel.addEventListener('scroll', function(event) {
+            event.preventDefault();
+            carousel.scrollLeft = index * images[index].offsetWidth;
+        });
+
+        setInterval(showNextImage, 5000);
+    };
+</script>
+
+@code {
+    private string username = "";
+    private string userId = "";
+    protected override async Task OnInitializedAsync ()
+    {
+        userId = await LocalStorage.GetItemAsync<string>("user_id") ?? "";
+        username = await LocalStorage.GetItemAsync<string>("username") ?? "";
+        await JS.InvokeVoidAsync("startCarousel");
+        StateHasChanged();
+    }
+}
